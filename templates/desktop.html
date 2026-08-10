@@ -623,44 +623,117 @@
             scrollBottom();
         }
 
-        // WebSocket Desktop
-        const ws = new WebSocket(`ws://${location.host}/ws/desktop`);
+        // WebSocket & REST Hybrid Setup (Para Vercel y Localhost)
+        const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        let ws;
+        let useHttpFallback = false;
 
-        ws.onmessage = (e) => {
-            const data = JSON.parse(e.data);
-            if (data.type === 'chat') {
-                addBubble(data.role, data.content, data.time);
-            } else if (data.type === 'typing') {
-                typingEl.className = data.status ? 'typing-wrap visible' : 'typing-wrap';
-                if (data.status) scrollBottom();
-            } else if (data.type === 'bookings_update') {
-                // Actualizar métricas y tabla
-                const count = data.count;
-                metricEl.textContent = count;
-                badgeEl.textContent = count + ' registros';
-                if (!data.bookings || data.bookings.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#8696a0; padding:20px;">ℹ️ Sin citas registradas. Prueba agendando en el chat o con <b>+ Demo</b>.</td></tr>';
-                } else {
-                    const rows = data.bookings.map(b =>
-                        `<tr>
-                            <td style="color:#00a884; font-weight:600;">${b.id}</td>
-                            <td>${b.name}</td>
-                            <td>${b.date}</td>
-                            <td>${b.time}</td>
-                            <td style="color:#8696a0;">${b.phone || '-'}</td>
-                        </tr>`
-                    ).join('');
-                    tbody.innerHTML = rows;
+        try {
+            ws = new WebSocket(`${wsProtocol}//${location.host}/ws/desktop`);
+            ws.onopen = () => { console.log('WebSocket Desktop conectado'); };
+            ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === 'chat') {
+                    addBubble(data.role, data.content, data.time);
+                } else if (data.type === 'typing') {
+                    typingEl.className = data.status ? 'typing-wrap visible' : 'typing-wrap';
+                    if (data.status) scrollBottom();
+                } else if (data.type === 'bookings_update') {
+                    updateBookingsTable(data.bookings, data.count);
+                }
+            };
+            ws.onerror = () => { enableHttpFallback(); };
+            ws.onclose = () => { enableHttpFallback(); };
+        } catch(e) {
+            enableHttpFallback();
+        }
+
+        function enableHttpFallback() {
+            if (useHttpFallback) return;
+            useHttpFallback = true;
+            console.log('Usando HTTP REST Fallback en Vercel Desktop');
+            setInterval(pollStateDesktop, 1500);
+        }
+
+        setTimeout(() => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                enableHttpFallback();
+            }
+        }, 1500);
+
+        function updateBookingsTable(bookings, count) {
+            metricEl.textContent = count;
+            badgeEl.textContent = count + ' registros';
+            if (!bookings || bookings.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#8696a0; padding:20px;">ℹ️ Sin citas registradas. Prueba agendando en el chat o con <b>+ Demo</b>.</td></tr>';
+            } else {
+                const rows = bookings.map(b =>
+                    `<tr>
+                        <td style="color:#00a884; font-weight:600;">${b.id}</td>
+                        <td>${b.name}</td>
+                        <td>${b.date}</td>
+                        <td>${b.time}</td>
+                        <td style="color:#8696a0;">${b.phone || '-'}</td>
+                    </tr>`
+                ).join('');
+                tbody.innerHTML = rows;
+            }
+        }
+
+        async function pollStateDesktop() {
+            try {
+                const res = await fetch('/api/state');
+                if (!res.ok) return;
+                const data = await res.json();
+                updateBookingsTable(data.bookings, data.count);
+                
+                const msgs = data.messages || [];
+                const totalInDom = chatArea.querySelectorAll('.bubble-wrap').length;
+                if (msgs.length > totalInDom) {
+                    for (let i = totalInDom; i < msgs.length; i++) {
+                        const m = msgs[i];
+                        addBubble(m.role, m.content, m.time);
+                    }
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function sendDesktop() {
+            const text = input.value.trim();
+            if (!text) return;
+            input.value = '';
+
+            const now = new Date();
+            const ts = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ content: text }));
+            } else {
+                addBubble('user', text, ts);
+                typingEl.className = 'typing-wrap visible';
+                scrollBottom();
+                try {
+                    const res = await fetch('/api/send_message', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: text })
+                    });
+                    const data = await res.json();
+                    typingEl.className = 'typing-wrap';
+                    updateBookingsTable(data.bookings, data.count);
+                    const msgs = data.messages || [];
+                    const totalInDom = chatArea.querySelectorAll('.bubble-wrap').length;
+                    if (msgs.length > totalInDom) {
+                        for (let i = totalInDom; i < msgs.length; i++) {
+                            const m = msgs[i];
+                            addBubble(m.role, m.content, m.time);
+                        }
+                    }
+                } catch(e) {
+                    typingEl.className = 'typing-wrap';
+                    console.error('Error enviando HTTP:', e);
                 }
             }
-        };
-
-        // Enviar desde escritorio
-        function sendDesktop() {
-            const text = input.value.trim();
-            if (!text || ws.readyState !== WebSocket.OPEN) return;
-            ws.send(JSON.stringify({ content: text }));
-            input.value = '';
         }
 
         input.addEventListener('keydown', (e) => {

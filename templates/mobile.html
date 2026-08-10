@@ -236,9 +236,10 @@
     </div>
 
     <script>
-        const area    = document.getElementById('chatArea');
+        const area     = document.getElementById('chatArea');
         const typingEl = document.getElementById('typingEl');
-        const input   = document.getElementById('msgInput');
+        const input    = document.getElementById('msgInput');
+        let useHttpFallback = false;
 
         function scrollBottom() { area.scrollTop = area.scrollHeight; }
         scrollBottom();
@@ -256,24 +257,92 @@
             scrollBottom();
         }
 
-        const ws = new WebSocket(`ws://${location.host}/ws/mobile`);
-        ws.onmessage = (e) => {
-            const data = JSON.parse(e.data);
-            if (data.type === 'chat' && data.role === 'assistant') {
-                addBubble('assistant', data.content, data.time);
-            } else if (data.type === 'typing') {
-                typingEl.className = data.status ? 'typing-wrap show' : 'typing-wrap';
-                if (data.status) scrollBottom();
-            }
-        };
+        // WebSockets Setup con fallback a HTTP REST (Para Vercel y redes móviles)
+        const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        let ws;
+        try {
+            ws = new WebSocket(`${wsProtocol}//${location.host}/ws/mobile`);
+            ws.onopen = () => { console.log('WebSocket conectado en móvil'); };
+            ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === 'chat' && data.role === 'assistant') {
+                    addBubble('assistant', data.content, data.time);
+                } else if (data.type === 'typing') {
+                    typingEl.className = data.status ? 'typing-wrap show' : 'typing-wrap';
+                    if (data.status) scrollBottom();
+                }
+            };
+            ws.onerror = () => { enableHttpFallback(); };
+            ws.onclose = () => { enableHttpFallback(); };
+        } catch(e) {
+            enableHttpFallback();
+        }
 
-        function send(text) {
-            if (!text || ws.readyState !== WebSocket.OPEN) return;
-            // Mostrar burbuja del usuario localmente
+        function enableHttpFallback() {
+            if (useHttpFallback) return;
+            useHttpFallback = true;
+            console.log('Usando HTTP REST Fallback en Vercel/Móvil');
+            setInterval(pollState, 1500);
+        }
+
+        // Si tarda más de 1.5s en conectar WS, activar HTTP fallback automáticamente
+        setTimeout(() => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                enableHttpFallback();
+            }
+        }, 1500);
+
+        async function pollState() {
+            try {
+                const res = await fetch('/api/state');
+                if (!res.ok) return;
+                const data = await res.json();
+                const msgs = data.messages || [];
+                const totalInDom = area.querySelectorAll('.bwrap').length;
+                if (msgs.length > totalInDom) {
+                    for (let i = totalInDom; i < msgs.length; i++) {
+                        const m = msgs[i];
+                        addBubble(m.role, m.content, m.time);
+                    }
+                }
+            } catch(e) { console.error('Error polling:', e); }
+        }
+
+        async function send(text) {
+            if (!text) return;
             const now = new Date();
             const ts = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
-            addBubble('user', text, ts);
-            ws.send(JSON.stringify({ content: text }));
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                addBubble('user', text, ts);
+                ws.send(JSON.stringify({ content: text }));
+            } else {
+                // Modo HTTP REST (Vercel)
+                addBubble('user', text, ts);
+                typingEl.className = 'typing-wrap show';
+                scrollBottom();
+                try {
+                    const res = await fetch('/api/send_message', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: text })
+                    });
+                    const data = await res.json();
+                    typingEl.className = 'typing-wrap';
+                    if (data.messages && data.messages.length > 0) {
+                        const totalInDom = area.querySelectorAll('.bwrap').length;
+                        if (data.messages.length > totalInDom) {
+                            for (let i = totalInDom; i < data.messages.length; i++) {
+                                const m = data.messages[i];
+                                addBubble(m.role, m.content, m.time);
+                            }
+                        }
+                    }
+                } catch(e) {
+                    typingEl.className = 'typing-wrap';
+                    console.error('Error enviando HTTP:', e);
+                }
+            }
         }
 
         function sendMsg() {
