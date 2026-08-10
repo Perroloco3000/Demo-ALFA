@@ -323,14 +323,26 @@ async def handle_user_input(text: str):
     MESSAGES.append({"role": "assistant", "content": reply, "time": ts})
 
 import urllib.parse
+import os
+
+IS_VERCEL = os.environ.get("VERCEL", "") == "1"
 
 # ==========================================
 # 6. RUTAS FASTAPI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def get_desktop(request: Request):
-    local_ip = get_local_ip()
-    mobile_url = f"http://{local_ip}:8000/mobile"
+    # Detectar si estamos en Vercel o en local
+    if IS_VERCEL:
+        # En Vercel, usar el dominio del request (ej: demo-alfa.vercel.app)
+        host = request.headers.get("host", request.url.hostname)
+        scheme = "https"
+        mobile_url = f"{scheme}://{host}/mobile"
+    else:
+        # Localmente, usar IP local
+        local_ip = get_local_ip()
+        mobile_url = f"http://{local_ip}:8000/mobile"
+    
     mobile_url_encoded = urllib.parse.quote(mobile_url, safe='')
     return templates.TemplateResponse(
         request=request,
@@ -338,7 +350,7 @@ async def get_desktop(request: Request):
         context={
             "mobile_url": mobile_url,
             "mobile_url_encoded": mobile_url_encoded,
-            "local_ip": local_ip,
+            "is_vercel": IS_VERCEL,
             "messages": MESSAGES,
             "bookings": BOOKINGS,
         }
