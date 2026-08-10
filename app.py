@@ -35,11 +35,7 @@ MESSAGES: List[Dict] = [
     }
 ]
 
-BOOKINGS: List[Dict] = [
-    {"id": "ALFA-823491", "date": "2026-08-12", "time": "10:00", "name": "Elena Torres",    "phone": "+56987654321", "created_at": "2026-08-10 10:15:30"},
-    {"id": "ALFA-410982", "date": "2026-08-12", "time": "10:30", "name": "Marcos Riquelme", "phone": "+56911223344", "created_at": "2026-08-10 11:42:00"},
-    {"id": "ALFA-591204", "date": "2026-08-15", "time": "16:00", "name": "Laura Benítez",   "phone": "+56955667788", "created_at": "2026-08-10 14:05:12"},
-]
+BOOKINGS: List[Dict] = []
 
 BOOKING_STATE = "idle"
 TEMP_BOOKING: Dict = {}
