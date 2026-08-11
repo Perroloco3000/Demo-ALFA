@@ -239,6 +239,7 @@
     </div>
 
     <script>
+        const SESSION_ID = "{{ session_id }}";
         const area     = document.getElementById('chatArea');
         const typingEl = document.getElementById('typingEl');
         const input    = document.getElementById('msgInput');
@@ -264,7 +265,7 @@
         const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         let ws;
         try {
-            ws = new WebSocket(`${wsProtocol}//${location.host}/ws/mobile`);
+            ws = new WebSocket(`${wsProtocol}//${location.host}/ws/mobile?session_id=${SESSION_ID}`);
             ws.onopen = () => { console.log('WebSocket conectado en móvil'); };
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
@@ -294,7 +295,11 @@
         async function startNewChat() {
             if (!confirm("¿Deseas iniciar un nuevo chat? Esto limpiará la conversación actual.")) return;
             try {
-                await fetch('/api/clear_chat', { method: 'POST' });
+                await fetch('/api/clear_chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ session_id: SESSION_ID })
+                });
             } catch(e) {
                 console.error("Error al iniciar nuevo chat:", e);
             }
@@ -316,7 +321,7 @@
 
         async function pollState() {
             try {
-                const res = await fetch('/api/state');
+                const res = await fetch(`/api/state?session_id=${SESSION_ID}`);
                 if (!res.ok) return;
                 const data = await res.json();
                 const msgs = data.messages || [];
@@ -339,7 +344,7 @@
 
             if (ws && ws.readyState === WebSocket.OPEN) {
                 addBubble('user', text, ts);
-                ws.send(JSON.stringify({ content: text }));
+                ws.send(JSON.stringify({ content: text, session_id: SESSION_ID }));
             } else {
                 // Modo HTTP REST (Vercel)
                 addBubble('user', text, ts);
@@ -349,7 +354,7 @@
                     const res = await fetch('/api/send_message', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ content: text })
+                        body: JSON.stringify({ content: text, session_id: SESSION_ID })
                     });
                     const data = await res.json();
                     typingEl.className = 'typing-wrap';

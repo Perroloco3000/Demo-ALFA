@@ -27,18 +27,37 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # ==========================================
 # 1. BASE DE DATOS Y ESTADO GLOBAL EN MEMORIA
 # ==========================================
-MESSAGES: List[Dict] = [
-    {
-        "role": "assistant",
-        "content": "¡Hola! Qué gusto saludarte. Te doy una cálida bienvenida a la **Clínica Dental AlfaDent**. 😊\n\nMi nombre es **Alfa** y estaré encantado de ayudarte el día de hoy. Puedo darte información sobre nuestros horarios de atención ⏰, dirección y ubicación 📍, tratamientos disponibles 🩺, precios de consulta 💰, o si lo prefieres, ayudarte a **agendar una cita** 📅 en solo un momento.\n\nCuéntame, ¿cómo te encuentras hoy y en qué te puedo colaborar?",
-        "time": datetime.now().strftime("%H:%M")
-    }
-]
-
 BOOKINGS: List[Dict] = []
+CHATS: Dict[str, Dict] = {}
 
-BOOKING_STATE = "idle"
-TEMP_BOOKING: Dict = {}
+def get_welcome_content():
+    return "¡Hola! Qué gusto saludarte. Te doy una cálida bienvenida a la **Clínica Dental AlfaDent**. 😊\n\nMi nombre es **Alfa** y estaré encantado de ayudarte el día de hoy. Puedo darte información sobre nuestros horarios de atención ⏰, dirección y ubicación 📍, tratamientos disponibles 🩺, precios de consulta 💰, o si lo prefieres, ayudarte a **agendar una cita** 📅 en solo un momento.\n\nCuéntame, ¿cómo te encuentras hoy y en qué te puedo colaborar?"
+
+def init_chat_session(session_id: str, name: str = None) -> Dict:
+    if session_id not in CHATS:
+        if not name:
+            num = len(CHATS) + 1
+            name = f"Estudiante {num}"
+        CHATS[session_id] = {
+            "id": session_id,
+            "name": name,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": get_welcome_content(),
+                    "time": datetime.now().strftime("%H:%M")
+                }
+            ],
+            "booking_state": "idle",
+            "temp_booking": {},
+            "avatar": "/static/logo.png",
+            "last_message": "¡Hola! Qué gusto saludarte...",
+            "time": datetime.now().strftime("%H:%M")
+        }
+    return CHATS[session_id]
+
+# Inicializar el chat base
+init_chat_session("default", "AlfaDent Asistente")
 
 VALID_SLOTS = [
     "09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
@@ -170,29 +189,38 @@ def parse_time_input(text: str, date_str: str) -> Tuple[Optional[str], Optional[
 # ==========================================
 class ConnectionManager:
     def __init__(self):
-        self.mobile_sockets: List[WebSocket] = []
+        # Mapea session_id -> List[WebSocket]
+        self.mobile_sockets: Dict[str, List[WebSocket]] = {}
         self.desktop_sockets: List[WebSocket] = []
 
-    async def connect_mobile(self, ws: WebSocket):
-        await ws.accept(); self.mobile_sockets.append(ws)
+    async def connect_mobile(self, ws: WebSocket, session_id: str):
+        await ws.accept()
+        if session_id not in self.mobile_sockets:
+            self.mobile_sockets[session_id] = []
+        self.mobile_sockets[session_id].append(ws)
 
-    def disconnect_mobile(self, ws: WebSocket):
-        self.mobile_sockets = [s for s in self.mobile_sockets if s != ws]
+    def disconnect_mobile(self, ws: WebSocket, session_id: str):
+        if session_id in self.mobile_sockets:
+            self.mobile_sockets[session_id] = [s for s in self.mobile_sockets[session_id] if s != ws]
+            if not self.mobile_sockets[session_id]:
+                del self.mobile_sockets[session_id]
 
     async def connect_desktop(self, ws: WebSocket):
-        await ws.accept(); self.desktop_sockets.append(ws)
+        await ws.accept()
+        self.desktop_sockets.append(ws)
 
     def disconnect_desktop(self, ws: WebSocket):
         self.desktop_sockets = [s for s in self.desktop_sockets if s != ws]
 
-    async def broadcast(self, payload: dict):
-        for ws in self.mobile_sockets + self.desktop_sockets:
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                pass
+    async def send_to_mobile(self, session_id: str, payload: dict):
+        if session_id in self.mobile_sockets:
+            for ws in self.mobile_sockets[session_id]:
+                try:
+                    await ws.send_json(payload)
+                except Exception:
+                    pass
 
-    async def broadcast_desktop(self, payload: dict):
+    async def send_to_desktop(self, payload: dict):
         for ws in self.desktop_sockets:
             try:
                 await ws.send_json(payload)
@@ -214,78 +242,103 @@ def get_local_ip() -> str:
 # ==========================================
 # 5. LÓGICA DEL BOT
 # ==========================================
-async def handle_user_input(text: str):
-    global BOOKING_STATE, TEMP_BOOKING
+async def handle_user_input(session_id: str, text: str):
+    chat = init_chat_session(session_id)
+    messages = chat["messages"]
+    booking_state = chat["booking_state"]
+    temp_booking = chat["temp_booking"]
     ts = datetime.now().strftime("%H:%M")
 
-    await manager.broadcast({"type": "chat", "role": "user", "content": text, "time": ts})
-    MESSAGES.append({"role": "user", "content": text, "time": ts})
+    # Guardar mensaje del usuario
+    msg_user = {"role": "user", "content": text, "time": ts}
+    messages.append(msg_user)
+    
+    # Broadcast a mobile
+    await manager.send_to_mobile(session_id, {"type": "chat", "role": "user", "content": text, "time": ts})
+    # Broadcast a desktop
+    await manager.send_to_desktop({
+        "type": "chat",
+        "session_id": session_id,
+        "role": "user",
+        "content": text,
+        "time": ts
+    })
+    
+    # Enviar lista de chats actualizada para actualizar last_message en sidebar
+    chat["last_message"] = text[:40] + ("..." if len(text) > 40 else "")
+    chat["time"] = ts
+    await manager.send_to_desktop({
+        "type": "chats_update",
+        "chats": list(CHATS.values())
+    })
 
-    await manager.broadcast({"type": "typing", "status": True})
+    # Mostrar "escribiendo..."
+    await manager.send_to_mobile(session_id, {"type": "typing", "status": True})
+    await manager.send_to_desktop({"type": "typing", "session_id": session_id, "status": True})
     await asyncio.sleep(1.0)
 
     reply = ""
 
-    if BOOKING_STATE != "idle":
-        if BOOKING_STATE == "waiting_date":
+    if booking_state != "idle":
+        if booking_state == "waiting_date":
             date_val, err = parse_date_input(text)
             if err:
                 reply = f"❌ {err}\n\nEscribe la fecha en formato YYYY-MM-DD, 'hoy' o 'mañana'."
             else:
-                TEMP_BOOKING["date"] = date_val
-                BOOKING_STATE = "waiting_time"
+                temp_booking["date"] = date_val
+                chat["booking_state"] = "waiting_time"
                 free = get_available_slots(date_val)
                 reply = f"📅 Fecha: **{date_val}**\n\n🕒 Horarios disponibles:\n{', '.join(free)}\n\n¿A qué hora deseas tu cita? (HH:MM)"
 
-        elif BOOKING_STATE == "waiting_time":
-            t_val, err = parse_time_input(text, TEMP_BOOKING["date"])
+        elif booking_state == "waiting_time":
+            t_val, err = parse_time_input(text, temp_booking["date"])
             if err == "occupied":
-                free = get_available_slots(TEMP_BOOKING["date"])
+                free = get_available_slots(temp_booking["date"])
                 reply = f"❌ Ese horario ya está ocupado.\n\n👉 Disponibles: {', '.join(free)}\n\nElige otro horario:"
             elif err:
                 reply = f"⚠️ {err}"
             else:
-                TEMP_BOOKING["time"] = t_val
-                BOOKING_STATE = "waiting_name"
+                temp_booking["time"] = t_val
+                chat["booking_state"] = "waiting_name"
                 reply = f"⏰ Hora: **{t_val}**\n\n¿A nombre de quién queda la cita?"
 
-        elif BOOKING_STATE == "waiting_name":
+        elif booking_state == "waiting_name":
             if len(text.strip()) < 3:
                 reply = "⚠️ El nombre es muy corto. Escribe nombre y apellido."
             else:
-                TEMP_BOOKING["name"] = text.strip()
-                BOOKING_STATE = "waiting_phone"
+                temp_booking["name"] = text.strip()
+                chat["booking_state"] = "waiting_phone"
                 reply = f"👤 Paciente: **{text.strip()}**\n\nEscribe tu número de teléfono de contacto:"
 
-        elif BOOKING_STATE == "waiting_phone":
+        elif booking_state == "waiting_phone":
             if not validate_phone(text.strip()):
                 reply = "⚠️ Número inválido (mínimo 8 dígitos). Escríbelo nuevamente:"
             else:
-                TEMP_BOOKING["phone"] = text.strip()
+                temp_booking["phone"] = text.strip()
                 code = generate_booking_code()
                 new_b = {
                     "id": code,
-                    "date": TEMP_BOOKING["date"],
-                    "time": TEMP_BOOKING["time"],
-                    "name": TEMP_BOOKING["name"],
-                    "phone": TEMP_BOOKING["phone"],
+                    "date": temp_booking["date"],
+                    "time": temp_booking["time"],
+                    "name": temp_booking["name"],
+                    "phone": temp_booking["phone"],
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
                 BOOKINGS.append(new_b)
                 reply = (
                     f"🎉 **¡CITA CONFIRMADA!**\n\n"
                     f"🆔 Código: `{code}`\n"
-                    f"👤 Paciente: {TEMP_BOOKING['name']}\n"
-                    f"📅 Fecha: {TEMP_BOOKING['date']}\n"
-                    f"⏰ Hora: {TEMP_BOOKING['time']} hrs\n"
-                    f"📞 Tel: {TEMP_BOOKING['phone']}\n\n"
+                    f"👤 Paciente: {temp_booking['name']}\n"
+                    f"📅 Fecha: {temp_booking['date']}\n"
+                    f"⏰ Hora: {temp_booking['time']} hrs\n"
+                    f"📞 Tel: {temp_booking['phone']}\n\n"
                     f"¡Te esperamos 10 minutos antes! 😊🦷\n\n"
                     f"¿Deseas hacer otra consulta?"
                 )
-                BOOKING_STATE = "idle"
-                TEMP_BOOKING.clear()
+                chat["booking_state"] = "idle"
+                temp_booking.clear()
                 # Notificar dashboard de escritorio
-                await manager.broadcast_desktop({
+                await manager.send_to_desktop({
                     "type": "bookings_update",
                     "bookings": BOOKINGS,
                     "count": len(BOOKINGS)
@@ -304,8 +357,8 @@ async def handle_user_input(text: str):
         elif intent == "prices":
             reply = f"💰 Respecto a los **costos y precios** de nuestros servicios:\n\n{CLINIC_INFO['faqs']['costos']}\n\n¿Te gustaría reservar una primera cita de evaluación?"
         elif intent == "booking":
-            BOOKING_STATE = "waiting_date"
-            TEMP_BOOKING.clear()
+            chat["booking_state"] = "waiting_date"
+            temp_booking.clear()
             reply = "📅 ¡Excelente! Con muchísimo gusto te ayudo a agendar tu cita. \n\nPara empezar, por favor indícame la fecha en la que te gustaría visitarnos (puedes escribir 'hoy', 'mañana' o una fecha específica como YYYY-MM-DD)."
         elif intent == "view_bookings":
             if not BOOKINGS:
@@ -316,11 +369,35 @@ async def handle_user_input(text: str):
         elif intent == "bye":
             reply = "¡Muchísimas gracias por comunicarte con nosotros! Que tengas un excelente día y recuerda que en AlfaDent estamos para cuidar de tu sonrisa. ¡Hasta luego! 😊🦷"
         else:
-            reply = "Disculpa, no logré comprender del todo tu consulta. 😅 ¿Podrías indicarme si deseas información sobre nuestros horarios, ubicación, servicios, precios, o si te gustaría agendar una cita? Estaré encantado de ayudarte."
+            reply = "Disculpa, no logré comprender del todo tu consulta. 😅 ¿Podrías indicarme si deseas información sobre nuestros horarios, ubicación, servicios, precios, o si te gustaría agendar una cita? Estaer encantado de ayudarte."
 
-    await manager.broadcast({"type": "typing", "status": False})
-    await manager.broadcast({"type": "chat", "role": "assistant", "content": reply, "time": ts})
-    MESSAGES.append({"role": "assistant", "content": reply, "time": ts})
+    # Guardar respuesta del asistente
+    msg_asst = {"role": "assistant", "content": reply, "time": ts}
+    messages.append(msg_asst)
+    
+    # Actualizar metadatos de sesión
+    chat["last_message"] = reply[:40] + ("..." if len(reply) > 40 else "")
+    chat["time"] = ts
+
+    # Desactivar "escribiendo..."
+    await manager.send_to_mobile(session_id, {"type": "typing", "status": False})
+    await manager.send_to_desktop({"type": "typing", "session_id": session_id, "status": False})
+    
+    # Broadcast mensaje del bot
+    await manager.send_to_mobile(session_id, {"type": "chat", "role": "assistant", "content": reply, "time": ts})
+    await manager.send_to_desktop({
+        "type": "chat",
+        "session_id": session_id,
+        "role": "assistant",
+        "content": reply,
+        "time": ts
+    })
+    
+    # Enviar lista de chats actualizada a desktop
+    await manager.send_to_desktop({
+        "type": "chats_update",
+        "chats": list(CHATS.values())
+    })
 
 import urllib.parse
 import os
@@ -351,18 +428,29 @@ async def get_desktop(request: Request):
             "mobile_url": mobile_url,
             "mobile_url_encoded": mobile_url_encoded,
             "is_vercel": IS_VERCEL,
-            "messages": MESSAGES,
+            "chats": list(CHATS.values()),
             "bookings": BOOKINGS,
         }
     )
 
+from fastapi.responses import RedirectResponse
+
 @app.get("/mobile", response_class=HTMLResponse)
-async def get_mobile(request: Request):
+async def get_mobile(request: Request, session_id: Optional[str] = None):
+    if not session_id:
+        # Generar un ID de sesión aleatorio
+        import random, string
+        new_sess = "session_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        return RedirectResponse(url=f"/mobile?session_id={new_sess}")
+        
+    chat = init_chat_session(session_id)
     return templates.TemplateResponse(
         request=request,
         name="mobile.html",
         context={
-            "messages": MESSAGES,
+            "messages": chat["messages"],
+            "session_id": session_id,
+            "chat_name": chat["name"]
         }
     )
 
@@ -382,7 +470,7 @@ async def add_test_booking():
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     BOOKINGS.append(new_b)
-    await manager.broadcast_desktop({
+    await manager.send_to_desktop({
         "type": "bookings_update",
         "bookings": BOOKINGS,
         "count": len(BOOKINGS)
@@ -392,7 +480,7 @@ async def add_test_booking():
 @app.post("/api/clear_bookings")
 async def clear_bookings():
     BOOKINGS.clear()
-    await manager.broadcast_desktop({
+    await manager.send_to_desktop({
         "type": "bookings_update",
         "bookings": BOOKINGS,
         "count": 0
@@ -400,52 +488,65 @@ async def clear_bookings():
     return {"status": "ok", "count": 0}
 
 @app.post("/api/clear_chat")
-async def clear_chat():
-    global BOOKING_STATE
-    BOOKING_STATE = "idle"
-    TEMP_BOOKING.clear()
+async def clear_chat(request: Request):
+    data = await request.json()
+    session_id = data.get("session_id", "default")
     
-    # Conservar el primer mensaje de bienvenida
-    first_msg = None
-    if MESSAGES:
-        first_msg = MESSAGES[0]
-        
-    MESSAGES.clear()
-    if first_msg:
-        first_msg["time"] = datetime.now().strftime("%H:%M")
-        MESSAGES.append(first_msg)
-    else:
-        MESSAGES.append({
+    chat = init_chat_session(session_id)
+    chat["booking_state"] = "idle"
+    chat["temp_booking"].clear()
+    
+    chat["messages"] = [
+        {
             "role": "assistant",
-            "content": "¡Hola! Qué gusto saludarte. Te doy una cálida bienvenida a la **Clínica Dental AlfaDent**. 😊\n\nMi nombre es **Alfa** y estaré encantado de ayudarte el día de hoy. Puedo darte información sobre nuestros horarios de atención ⏰, dirección y ubicación 📍, tratamientos disponibles 🩺, precios de consulta 💰, o si lo prefieres, ayudarte a **agendar una cita** 📅 en solo un momento.\n\nCuéntame, ¿cómo te encuentras hoy y en qué te puedo colaborar?",
+            "content": get_welcome_content(),
             "time": datetime.now().strftime("%H:%M")
-        })
+        }
+    ]
+    chat["last_message"] = "¡Hola! Qué gusto saludarte..."
+    chat["time"] = datetime.now().strftime("%H:%M")
 
-    await manager.broadcast({
+    # Notificar a la app móvil y al escritorio
+    await manager.send_to_mobile(session_id, {
         "type": "clear_chat",
-        "messages": MESSAGES
+        "messages": chat["messages"]
     })
-    return {"status": "ok", "messages": MESSAGES}
+    await manager.send_to_desktop({
+        "type": "clear_chat",
+        "session_id": session_id,
+        "messages": chat["messages"]
+    })
+    await manager.send_to_desktop({
+        "type": "chats_update",
+        "chats": list(CHATS.values())
+    })
+    return {"status": "ok", "messages": chat["messages"]}
 
 @app.get("/api/state")
-async def get_state():
+async def get_state(session_id: str = "default"):
+    chat = init_chat_session(session_id)
     return {
-        "messages": MESSAGES,
+        "messages": chat["messages"],
         "bookings": BOOKINGS,
-        "count": len(BOOKINGS)
+        "count": len(BOOKINGS),
+        "chats": list(CHATS.values())
     }
 
 @app.post("/api/send_message")
 async def api_send_message(request: Request):
     data = await request.json()
     content = data.get("content", "").strip()
+    session_id = data.get("session_id", "default")
     if content:
-        await handle_user_input(content)
+        await handle_user_input(session_id, content)
+    
+    chat = init_chat_session(session_id)
     return {
         "status": "ok",
-        "messages": MESSAGES,
+        "messages": chat["messages"],
         "bookings": BOOKINGS,
-        "count": len(BOOKINGS)
+        "count": len(BOOKINGS),
+        "chats": list(CHATS.values())
     }
 
 @app.websocket("/ws/desktop")
@@ -455,20 +556,22 @@ async def ws_desktop(websocket: WebSocket):
         while True:
             data = await websocket.receive_json()
             if data.get("content"):
-                await handle_user_input(data["content"])
+                session_id = data.get("session_id", "default")
+                await handle_user_input(session_id, data["content"])
     except (WebSocketDisconnect, Exception):
         manager.disconnect_desktop(websocket)
 
 @app.websocket("/ws/mobile")
 async def ws_mobile(websocket: WebSocket):
-    await manager.connect_mobile(websocket)
+    session_id = websocket.query_params.get("session_id", "default")
+    await manager.connect_mobile(websocket, session_id)
     try:
         while True:
             data = await websocket.receive_json()
             if data.get("content"):
-                await handle_user_input(data["content"])
+                await handle_user_input(session_id, data["content"])
     except (WebSocketDisconnect, Exception):
-        manager.disconnect_mobile(websocket)
+        manager.disconnect_mobile(websocket, session_id)
 
 if __name__ == "__main__":
     import uvicorn

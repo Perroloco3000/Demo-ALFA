@@ -237,9 +237,11 @@
             padding: 12px 16px;
             gap: 12px;
             border-bottom: 1px solid var(--border);
-            background: #2a3942;
             cursor: pointer;
+            transition: background 0.15s;
         }
+        .contact-item:hover { background: rgba(255,255,255,0.04); }
+        .contact-item.active-contact { background: rgba(0,168,132,0.15); border-left: 3px solid var(--green); }
         .contact-avatar {
             width: 46px; height: 46px;
             border-radius: 50%;
@@ -550,14 +552,21 @@
             <div class="search-bar">
                 <input class="search-input" type="text" placeholder="🔍  Buscar o iniciar chat">
             </div>
-            <!-- Único contacto: AlfaDent -->
-            <div class="contact-item">
-                <img src="/static/logo.png" style="width: 42px; height: 42px; border-radius: 50%; background: white; padding: 3px; object-fit: contain; flex-shrink: 0;">
-                <div class="contact-info">
-                    <div class="contact-name">AlfaDent Asistente</div>
-                    <div class="contact-preview">Clínica Dental AlfaDent · en línea</div>
+            <!-- Lista dinámica de sesiones de chat -->
+            <div id="chatSessionsList">
+                {% for chat in chats %}
+                <div class="contact-item {% if loop.first %}active-contact{% endif %}" 
+                     onclick="switchToSession('{{ chat.id }}')"
+                     data-session="{{ chat.id }}"
+                     style="cursor: pointer;">
+                    <img src="{{ chat.avatar }}" style="width: 42px; height: 42px; border-radius: 50%; background: white; padding: 3px; object-fit: contain; flex-shrink: 0;">
+                    <div class="contact-info">
+                        <div class="contact-name">{{ chat.name }}</div>
+                        <div class="contact-preview" id="preview-{{ chat.id }}">{{ chat.last_message }}</div>
+                    </div>
+                    <div class="contact-time" id="time-{{ chat.id }}">{{ chat.time }}</div>
                 </div>
-                <div class="contact-time">ahora</div>
+                {% endfor %}
             </div>
         </div>
 
@@ -682,7 +691,10 @@
             scrollBottom();
         }
 
-        // WebSocket & REST Hybrid Setup (Para Vercel y Localhost)
+        // === Sesión activa ===
+        let activeSessionId = '{{ chats[0].id if chats else "default" }}';
+
+        // === WebSocket & REST Hybrid ===
         const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         let ws;
         let useHttpFallback = false;
@@ -693,14 +705,23 @@
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
                 if (data.type === 'chat') {
-                    addBubble(data.role, data.content, data.time);
+                    // Solo mostrar en área de chat si pertenece a la sesión activa
+                    if (data.session_id === activeSessionId) {
+                        addBubble(data.role, data.content, data.time);
+                    }
                 } else if (data.type === 'typing') {
-                    typingEl.className = data.status ? 'typing-wrap visible' : 'typing-wrap';
-                    if (data.status) scrollBottom();
+                    if (data.session_id === activeSessionId) {
+                        typingEl.className = data.status ? 'typing-wrap visible' : 'typing-wrap';
+                        if (data.status) scrollBottom();
+                    }
                 } else if (data.type === 'bookings_update') {
                     updateBookingsTable(data.bookings, data.count);
                 } else if (data.type === 'clear_chat') {
-                    resetChatMessages(data.messages);
+                    if (data.session_id === activeSessionId) {
+                        resetChatMessages(data.messages);
+                    }
+                } else if (data.type === 'chats_update') {
+                    updateSessionsSidebar(data.chats);
                 }
             };
             ws.onerror = () => { enableHttpFallback(); };
@@ -717,10 +738,51 @@
             }
         }
 
-        async function startNewChat() {
-            if (!confirm("¿Deseas iniciar un nuevo chat? Esto limpiará la conversación actual.")) return;
+        // Actualizar sidebar con lista de sesiones
+        function updateSessionsSidebar(chats) {
+            const list = document.getElementById('chatSessionsList');
+            if (!list || !chats) return;
+            list.innerHTML = chats.map(chat => `
+                <div class="contact-item ${chat.id === activeSessionId ? 'active-contact' : ''}" 
+                     onclick="switchToSession('${chat.id}')"
+                     data-session="${chat.id}"
+                     style="cursor: pointer;">
+                    <img src="${chat.avatar}" style="width: 42px; height: 42px; border-radius: 50%; background: white; padding: 3px; object-fit: contain; flex-shrink: 0;">
+                    <div class="contact-info">
+                        <div class="contact-name">${chat.name}</div>
+                        <div class="contact-preview" id="preview-${chat.id}">${chat.last_message || ''}</div>
+                    </div>
+                    <div class="contact-time" id="time-${chat.id}">${chat.time || ''}</div>
+                </div>
+            `).join('');
+        }
+
+        // Cambiar la sesión activa en el panel de chat
+        async function switchToSession(sessionId) {
+            activeSessionId = sessionId;
+
+            // Resaltar en sidebar
+            document.querySelectorAll('#chatSessionsList .contact-item').forEach(el => {
+                el.classList.toggle('active-contact', el.dataset.session === sessionId);
+            });
+
+            // Cargar mensajes de esa sesión
             try {
-                await fetch('/api/clear_chat', { method: 'POST' });
+                const res = await fetch(`/api/state?session_id=${sessionId}`);
+                const data = await res.json();
+                resetChatMessages(data.messages || []);
+                updateBookingsTable(data.bookings, data.count);
+            } catch(e) { console.error(e); }
+        }
+
+        async function startNewChat() {
+            if (!confirm("¿Deseas iniciar un nuevo chat para esta sesión?")) return;
+            try {
+                await fetch('/api/clear_chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ session_id: activeSessionId })
+                });
             } catch(e) {
                 console.error("Error al iniciar nuevo chat:", e);
             }
@@ -760,10 +822,11 @@
 
         async function pollStateDesktop() {
             try {
-                const res = await fetch('/api/state');
+                const res = await fetch(`/api/state?session_id=${activeSessionId}`);
                 if (!res.ok) return;
                 const data = await res.json();
                 updateBookingsTable(data.bookings, data.count);
+                if (data.chats) updateSessionsSidebar(data.chats);
                 
                 const msgs = data.messages || [];
                 const totalInDom = chatArea.querySelectorAll('.bubble-wrap').length;
@@ -787,7 +850,7 @@
             const ts = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
 
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ content: text }));
+                ws.send(JSON.stringify({ content: text, session_id: activeSessionId }));
             } else {
                 addBubble('user', text, ts);
                 typingEl.className = 'typing-wrap visible';
@@ -796,11 +859,12 @@
                     const res = await fetch('/api/send_message', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ content: text })
+                        body: JSON.stringify({ content: text, session_id: activeSessionId })
                     });
                     const data = await res.json();
                     typingEl.className = 'typing-wrap';
                     updateBookingsTable(data.bookings, data.count);
+                    if (data.chats) updateSessionsSidebar(data.chats);
                     const msgs = data.messages || [];
                     const totalInDom = chatArea.querySelectorAll('.bubble-wrap').length;
                     if (msgs.length > totalInDom) {
