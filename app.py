@@ -389,6 +389,44 @@ async def add_test_booking():
     })
     return {"status": "ok", "booking": new_b, "count": len(BOOKINGS)}
 
+@app.post("/api/clear_bookings")
+async def clear_bookings():
+    BOOKINGS.clear()
+    await manager.broadcast_desktop({
+        "type": "bookings_update",
+        "bookings": BOOKINGS,
+        "count": 0
+    })
+    return {"status": "ok", "count": 0}
+
+@app.post("/api/clear_chat")
+async def clear_chat():
+    global BOOKING_STATE
+    BOOKING_STATE = "idle"
+    TEMP_BOOKING.clear()
+    
+    # Conservar el primer mensaje de bienvenida
+    first_msg = None
+    if MESSAGES:
+        first_msg = MESSAGES[0]
+        
+    MESSAGES.clear()
+    if first_msg:
+        first_msg["time"] = datetime.now().strftime("%H:%M")
+        MESSAGES.append(first_msg)
+    else:
+        MESSAGES.append({
+            "role": "assistant",
+            "content": "¡Hola! Qué gusto saludarte. Te doy una cálida bienvenida a la **Clínica Dental AlfaDent**. 😊\n\nMi nombre es **Alfa** y estaré encantado de ayudarte el día de hoy. Puedo darte información sobre nuestros horarios de atención ⏰, dirección y ubicación 📍, tratamientos disponibles 🩺, precios de consulta 💰, o si lo prefieres, ayudarte a **agendar una cita** 📅 en solo un momento.\n\nCuéntame, ¿cómo te encuentras hoy y en qué te puedo colaborar?",
+            "time": datetime.now().strftime("%H:%M")
+        })
+
+    await manager.broadcast({
+        "type": "clear_chat",
+        "messages": MESSAGES
+    })
+    return {"status": "ok", "messages": MESSAGES}
+
 @app.get("/api/state")
 async def get_state():
     return {

@@ -569,7 +569,8 @@
                     <div class="wa-chat-name">AlfaDent Asistente · Alfa IA</div>
                     <div class="wa-status"><span class="online-dot"></span>en línea</div>
                 </div>
-                <div class="header-icons">
+                <div class="header-icons" style="display:flex; align-items:center; gap:16px;">
+                    <span onclick="startNewChat()" title="Nuevo chat (Reiniciar)" style="font-size: 1.5rem; font-weight: bold; color: var(--green); cursor: pointer; padding: 4px; line-height: 1; user-select: none;">+</span>
                     <span title="Búsqueda">🔍</span>
                     <span title="Videollamada">📹</span>
                     <span title="Opciones">⋮</span>
@@ -698,12 +699,31 @@
                     if (data.status) scrollBottom();
                 } else if (data.type === 'bookings_update') {
                     updateBookingsTable(data.bookings, data.count);
+                } else if (data.type === 'clear_chat') {
+                    resetChatMessages(data.messages);
                 }
             };
             ws.onerror = () => { enableHttpFallback(); };
             ws.onclose = () => { enableHttpFallback(); };
         } catch(e) {
             enableHttpFallback();
+        }
+
+        function resetChatMessages(messages) {
+            const bubbles = chatArea.querySelectorAll('.bubble-wrap');
+            bubbles.forEach(b => b.remove());
+            if (messages) {
+                messages.forEach(m => addBubble(m.role, m.content, m.time));
+            }
+        }
+
+        async function startNewChat() {
+            if (!confirm("¿Deseas iniciar un nuevo chat? Esto limpiará la conversación actual.")) return;
+            try {
+                await fetch('/api/clear_chat', { method: 'POST' });
+            } catch(e) {
+                console.error("Error al iniciar nuevo chat:", e);
+            }
         }
 
         function enableHttpFallback() {
@@ -747,7 +767,9 @@
                 
                 const msgs = data.messages || [];
                 const totalInDom = chatArea.querySelectorAll('.bubble-wrap').length;
-                if (msgs.length > totalInDom) {
+                if (msgs.length < totalInDom) {
+                    resetChatMessages(msgs);
+                } else if (msgs.length > totalInDom) {
                     for (let i = totalInDom; i < msgs.length; i++) {
                         const m = msgs[i];
                         addBubble(m.role, m.content, m.time);
