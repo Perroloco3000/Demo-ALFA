@@ -432,7 +432,7 @@
                     <button onclick="clearBookings()" title="Limpiar citas" style="background:#374248; color:#8696a0; border:none; border-radius:4px; padding:4px 8px; font-size:0.7rem; cursor:pointer;">🗑️</button>
                 </div>
             </div>
-            <div class="table-body" id="databaseBody" style="transition: max-height 0.3s ease-out; overflow: hidden; max-height: 1000px;">
+            <div class="table-body" id="databaseBody">
                 <table>
                     <thead>
                         <tr>
@@ -748,11 +748,12 @@
             const body = document.getElementById('databaseBody');
             const icon = document.getElementById('dbToggleIcon');
             if (dbExpanded) {
-                body.style.maxHeight = '0px';
+                body.style.display = 'none';
                 icon.style.transform = 'rotate(-90deg)';
                 dbExpanded = false;
             } else {
-                body.style.maxHeight = '1000px';
+                body.style.display = 'block'; // the original was display:flex in the CSS but block for a scrolling div is fine, actually let's just clear it to fallback to CSS flex
+                body.style.display = ''; 
                 icon.style.transform = 'rotate(0deg)';
                 dbExpanded = true;
             }
