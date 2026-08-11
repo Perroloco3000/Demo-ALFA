@@ -30,7 +30,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 MESSAGES: List[Dict] = [
     {
         "role": "assistant",
-        "content": "¡Hola! Te doy la bienvenida a **Clínica Dental AlfaDent**. Soy **Alfa IA**, tu asistente virtual corporativo 🦷🤖✨\n\nPuedo responder a tus consultas sobre nuestros horarios ⏰, dirección y ubicación 📍, tratamientos dentales 🩺, precios 💰 o ayudarte a **agendar una cita** 📅 en línea.\n\n¿En qué te puedo colaborar hoy?",
+        "content": "¡Hola! Qué gusto saludarte. Te doy una cálida bienvenida a la **Clínica Dental AlfaDent**. 😊\n\nMi nombre es **Alfa** y estaré encantado de ayudarte el día de hoy. Puedo darte información sobre nuestros horarios de atención ⏰, dirección y ubicación 📍, tratamientos disponibles 🩺, precios de consulta 💰, o si lo prefieres, ayudarte a **agendar una cita** 📅 en solo un momento.\n\nCuéntame, ¿cómo te encuentras hoy y en qué te puedo colaborar?",
         "time": datetime.now().strftime("%H:%M")
     }
 ]
@@ -293,30 +293,30 @@ async def handle_user_input(text: str):
     else:
         intent, _ = detect_intent(text)
         if intent == "greeting":
-            reply = "¡Hola! Bienvenido a **Clínica Dental AlfaDent**. Soy **Alfa IA** 🦷🤖\n\nPuedo ayudarte con:\n• Horarios ⏰\n• Ubicación 📍\n• Servicios 🩺\n• Precios 💰\n• Agendar cita 📅\n\n¿En qué te ayudo?"
+            reply = "¡Hola! Muy buenos días. Qué gusto saludarte, espero que estés teniendo un excelente día. Bienvenido a AlfaDent. 😊 ¿Cómo te encuentras hoy? ¿En qué te puedo colaborar?"
         elif intent == "hours":
-            reply = f"⏰ **Horarios:**\n{CLINIC_INFO['faqs']['horarios']}"
+            reply = f"Con gusto. ⏰ Respecto a nuestros **horarios de atención**:\n\n{CLINIC_INFO['faqs']['horarios']}\n\n¿Te gustaría que te ayude a agendar una cita en alguno de estos horarios?"
         elif intent == "location":
-            reply = f"📍 **Dirección:**\n{CLINIC_INFO['faqs']['ubicacion']}"
+            reply = f"¡Por supuesto! 📍 Nos encontramos ubicados en:\n\n{CLINIC_INFO['faqs']['ubicacion']}\n\nContamos con facilidades de acceso. ¿Tienes alguna duda de cómo llegar?"
         elif intent == "services":
             svc = "\n".join(CLINIC_INFO["services"])
-            reply = f"🩺 **Servicios AlfaDent:**\n\n{svc}\n\n¿Te agendamos una cita?"
+            reply = f"🩺 Con gusto te detallo los **tratamientos y servicios** que ofrecemos en AlfaDent:\n\n{svc}\n\n¿Te interesaría agendar una evaluación para alguno de estos tratamientos?"
         elif intent == "prices":
-            reply = f"💰 **Precios:**\n{CLINIC_INFO['faqs']['costos']}"
+            reply = f"💰 Respecto a los **costos y precios** de nuestros servicios:\n\n{CLINIC_INFO['faqs']['costos']}\n\n¿Te gustaría reservar una primera cita de evaluación?"
         elif intent == "booking":
             BOOKING_STATE = "waiting_date"
             TEMP_BOOKING.clear()
-            reply = "📅 ¡Iniciemos tu cita!\n\n¿Para qué fecha? (YYYY-MM-DD, 'hoy' o 'mañana')"
+            reply = "📅 ¡Excelente! Con muchísimo gusto te ayudo a agendar tu cita. \n\nPara empezar, por favor indícame la fecha en la que te gustaría visitarnos (puedes escribir 'hoy', 'mañana' o una fecha específica como YYYY-MM-DD)."
         elif intent == "view_bookings":
             if not BOOKINGS:
-                reply = "ℹ️ No hay citas registradas aún."
+                reply = "ℹ️ Por el momento no contamos con citas registradas en el sistema. ¿Te gustaría agendar una?"
             else:
                 lines = "\n".join([f"• **{b['id']}** | {b['name']} | {b['date']} {b['time']}" for b in BOOKINGS])
-                reply = f"📋 **Citas registradas:**\n\n{lines}"
+                reply = f"📋 ¡Claro que sí! Aquí tienes la lista de las **citas registradas** actualmente:\n\n{lines}\n\n¿Deseas realizar algún cambio o tienes otra consulta?"
         elif intent == "bye":
-            reply = "¡Hasta luego! En AlfaDent nos importa tu salud bucal. 😊🦷"
+            reply = "¡Muchísimas gracias por comunicarte con nosotros! Que tengas un excelente día y recuerda que en AlfaDent estamos para cuidar de tu sonrisa. ¡Hasta luego! 😊🦷"
         else:
-            reply = "No entendí tu mensaje. 🤖\n\nPuedes preguntarme sobre **horarios**, **ubicación**, **servicios** o escribir **'cita'** para agendar."
+            reply = "Disculpa, no logré comprender del todo tu consulta. 😅 ¿Podrías indicarme si deseas información sobre nuestros horarios, ubicación, servicios, precios, o si te gustaría agendar una cita? Estaré encantado de ayudarte."
 
     await manager.broadcast({"type": "typing", "status": False})
     await manager.broadcast({"type": "chat", "role": "assistant", "content": reply, "time": ts})
