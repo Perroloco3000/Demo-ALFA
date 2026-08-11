@@ -422,14 +422,17 @@
 
         <!-- Tabla de citas (PROMINENTE ARRIBA) -->
         <div class="table-wrap">
-            <div class="table-header">
-                <div>💾 Base de Datos Clínica <span class="badge" id="badgeCount">{{ bookings|length }} registros</span></div>
-                <div style="display:flex; gap:4px;">
+            <div class="table-header" onclick="toggleDatabase()" style="cursor: pointer;" title="Haz clic para mostrar/ocultar">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span id="dbToggleIcon" style="font-size:0.8rem; transition: transform 0.3s;">▼</span>
+                    💾 Base de Datos Clínica <span class="badge" id="badgeCount">{{ bookings|length }} registros</span>
+                </div>
+                <div style="display:flex; gap:4px;" onclick="event.stopPropagation();">
                     <button onclick="addTestBooking()" title="Agregar cita de prueba" style="background:#00a884; color:white; border:none; border-radius:4px; padding:4px 8px; font-size:0.7rem; font-weight:600; cursor:pointer;">➕ Demo</button>
                     <button onclick="clearBookings()" title="Limpiar citas" style="background:#374248; color:#8696a0; border:none; border-radius:4px; padding:4px 8px; font-size:0.7rem; cursor:pointer;">🗑️</button>
                 </div>
             </div>
-            <div class="table-body">
+            <div class="table-body" id="databaseBody" style="transition: max-height 0.3s ease-out; overflow: hidden; max-height: 1000px;">
                 <table>
                     <thead>
                         <tr>
@@ -739,6 +742,21 @@
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') sendDesktop();
         });
+
+        let dbExpanded = true;
+        function toggleDatabase() {
+            const body = document.getElementById('databaseBody');
+            const icon = document.getElementById('dbToggleIcon');
+            if (dbExpanded) {
+                body.style.maxHeight = '0px';
+                icon.style.transform = 'rotate(-90deg)';
+                dbExpanded = false;
+            } else {
+                body.style.maxHeight = '1000px';
+                icon.style.transform = 'rotate(0deg)';
+                dbExpanded = true;
+            }
+        }
     </script>
 </body>
 </html>
